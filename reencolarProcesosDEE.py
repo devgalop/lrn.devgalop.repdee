@@ -132,6 +132,7 @@ def search_database_state(response_dian_states: list):
         for dian_response in tqdm(response_dian_states, total=len(response_dian_states), desc="Searching database state"):
             id_transmision = dian_response.get('respuestaDIAN').get('idTrasmision')
             track_id = dian_response.get('respuestaDIAN').get('trackId')
+            process_type = dian_response.get('process_type')
             register_state = get_register_state(conn, id_transmision, track_id)
             if(register_state is None):
                 #print(f"IdTransmision: {id_transmision} - TrackId: {track_id} - StepId: 0")
@@ -141,7 +142,8 @@ def search_database_state(response_dian_states: list):
                     'step_id': 0,
                     'prod_id': 0,
                     'subprod_id': 0,
-                    'dian_response': dian_response
+                    'dian_response': dian_response,
+                    'process_type': process_type
                 })
                 continue
             #print(f"IdTransmision: {id_transmision} - TrackId: {track_id} - StepId: {register_state.step_id}")
@@ -151,7 +153,8 @@ def search_database_state(response_dian_states: list):
                 'step_id': register_state.step_id,
                 'prod_id': register_state.prod_id,
                 'subprod_id': register_state.subprod_id,
-                'dian_response': dian_response
+                'dian_response': dian_response,
+                'process_type': process_type
             })
                 
         conn.close()      
@@ -171,76 +174,110 @@ def get_register_state(conn: db.Connection, id_transmision: str, track_id: str):
     except Exception as e:
         print(f"Error has been thrown during database query: {e}")
         return None
+ 
+# Update register state in dataChannel table   
+def update_register_channel_state(conn: db.Connection, id_transmision: str, track_id: str):
+    try:
+        cursor = conn.cursor()
+        sql_query = f"UPDATE DATACOM.dbo.DataChannel_{id_transmision} SET Estado = 0 WHERE Canal_datos = 'PE' AND IdentificadorUnico IN ( SELECT IdUnico FROM DATACOM.dbo.Data_{id_transmision}_Spool WHERE UCID = '{track_id}')"
+        cursor.execute(sql_query)
+        conn.commit()
+        cursor.close()
+    except Exception as e:
+        print(f"Error has been thrown during database query: {e}")
+        return None
 
 # Generate messages to send to the SQS queue
 def generate_queue_message(register_steps: list):
     sqs_messages = []
-    for step_found in tqdm(register_steps, total=len(register_steps), desc="Generating messages to SQS"):
-        step_id = int(step_found.get('step_id'))
-        match step_id:
-            case value if value is None or value < 2:
-                sqs_messages.append({
-                    "queue_url": os.getenv("AWS_SQS_URL_PARSER"),
-                    "message": step_found.get('dian_response')
-                })
-            case value if value < 3:
+    try:
+        conn = db.connect(DB_CONNECTION_STRING)
+        for step_found in tqdm(register_steps, total=len(register_steps), desc="Generating messages to SQS"):
+            process_type = step_found.get('process_type')
+            dian_response = step_found.get('dian_response')
+            
+            if(process_type == "batch"):
+                
+                id_transmision = dian_response.get('respuestaDIAN').get('idTrasmision')
+                track_id = dian_response.get('respuestaDIAN').get('trackId')
+                update_register_channel_state(conn, id_transmision, track_id)
                 sqs_messages.append({
                     "queue_url": os.getenv("AWS_SQS_URL_DIAN_RESPONSE"),
-                    "message": step_found.get('dian_response').get('respuestaDIAN')
+                    "message": dian_response
                 })
-            case value if value < 4:
-                sqs_messages.append({
-                    "queue_url": os.getenv("AWS_SQS_URL_CHANNELS"),
-                    "message":{
-                        "RegisterId":step_found.get('track_id'),
-                        "IsReprocess":False,
-                        "ProcessType":"Ondemand",
-                        "ProcessId":step_found.get('id_transmision'),
-                        "Channel":"PE",
-                        "Part":"1",
-                        "IsResubmit":False,
-                        "IsFullReset":False,
-                        "IsApproved":False,
-                        "IsDEProcess":True,
-                        "IsAnEventuality":False
-                    }
-                    
-                })
-            case value if value < 5:
-                sqs_messages.append({
-                    "queue_url": os.getenv("AWS_SQS_URL_COMPOSER"),
-                    "message": {
-                        "RetryNumber":0,
-                        "ProcessType":"Ondemand",
-                        "ProcessId":step_found.get('id_transmision'),
-                        "Channel":"PE",
-                        "Part":0,
-                        "Segment":step_found.get('subprod_id'),
-                        "IsResubmit":False,
-                        "IsDEProcess":True,
-                        "RegisterId":step_found.get('track_id'),
-                        "IsAnEventuality":False
-                    }
-                })
-            case _:
-                sqs_messages.append({
-                    "queue_url": os.getenv("AWS_SQS_URL_REPORT"),
-                    "message": {
-                        "IdTransmision":step_found.get('id_transmision'),
-                        "TrackId":step_found.get('track_id'),
-                        "Segment":step_found.get('subprod_id'),
-                        "IsResubmit":False,
-                        "IgnoreDistribution":False,
-                        "ProcessType":"Ondemand",
-                        "ProcessId":step_found.get('id_transmision'),
-                        "RegisterId":step_found.get('track_id'),
-                        "Channel":"PE",
-                        "IsDEProcess":True,
-                        "IsAnEventuality":False
-                    }
-                })
-    return sqs_messages    
-
+                continue
+            
+            step_id = int(step_found.get('step_id'))
+            match step_id:
+                case value if value is None or value < 2:
+                    sqs_messages.append({
+                        "queue_url": os.getenv("AWS_SQS_URL_PARSER"),
+                        "message": dian_response
+                    })
+                case value if value < 3:
+                    sqs_messages.append({
+                        "queue_url": os.getenv("AWS_SQS_URL_DIAN_RESPONSE"),
+                        "message": dian_response.get('respuestaDIAN')
+                    })
+                case value if value < 4:
+                    sqs_messages.append({
+                        "queue_url": os.getenv("AWS_SQS_URL_CHANNELS"),
+                        "message":{
+                            "RegisterId":step_found.get('track_id'),
+                            "IsReprocess":False,
+                            "ProcessType":"Ondemand",
+                            "ProcessId":step_found.get('id_transmision'),
+                            "Channel":"PE",
+                            "Part":"1",
+                            "IsResubmit":False,
+                            "IsFullReset":False,
+                            "IsApproved":False,
+                            "IsDEProcess":True,
+                            "IsAnEventuality":False
+                        }
+                        
+                    })
+                case value if value < 5:
+                    sqs_messages.append({
+                        "queue_url": os.getenv("AWS_SQS_URL_COMPOSER"),
+                        "message": {
+                            "RetryNumber":0,
+                            "ProcessType":"Ondemand",
+                            "ProcessId":step_found.get('id_transmision'),
+                            "Channel":"PE",
+                            "Part":0,
+                            "Segment":step_found.get('subprod_id'),
+                            "IsResubmit":False,
+                            "IsDEProcess":True,
+                            "RegisterId":step_found.get('track_id'),
+                            "IsAnEventuality":False
+                        }
+                    })
+                case _:
+                    sqs_messages.append({
+                        "queue_url": os.getenv("AWS_SQS_URL_REPORT"),
+                        "message": {
+                            "IdTransmision":step_found.get('id_transmision'),
+                            "TrackId":step_found.get('track_id'),
+                            "Segment":step_found.get('subprod_id'),
+                            "IsResubmit":False,
+                            "IgnoreDistribution":False,
+                            "ProcessType":"Ondemand",
+                            "ProcessId":step_found.get('id_transmision'),
+                            "RegisterId":step_found.get('track_id'),
+                            "Channel":"PE",
+                            "IsDEProcess":True,
+                            "IsAnEventuality":False
+                        }
+                    })
+        
+        conn.close()
+        return sqs_messages
+        
+    except Exception as e:
+        print(f"Error has been thrown during queue message generation: {e}")
+        return None
+        
 # Send messages to the SQS queue
 def enqueue_sqs_messages(sqs_messages: list):
     message_id_list = []
@@ -288,9 +325,12 @@ def get_information_from_dian(information_list: list):
                 response = response.json()
                 if response.get('statusCode') in ['200', '409']:
                     response['customerTyn'] = information.get('emission_nit', "")
+                    response['product'] = response.get('idTrasmision', "").split('_')[1]
                     response['isReprocess'] = True
+                    process_type = get_process_type(response.get('process_type', ""))
                     response_dian.append({
                         "respuestaDIAN": response,
+                        "process_type": process_type
                     })
                 else:
                     response_error_dian.append({
@@ -305,10 +345,15 @@ def get_information_from_dian(information_list: list):
         print(f"get_information_from_dian__Error al obtener la información de DIAN: {e}")
         raise Exception(f"get_information_from_dian__Error al obtener la información de DIAN: {e}")
 
+def get_process_type(type_found : str):
+    type_found = type_found.lower()
+    if( type_found != "ondemand"):
+        return "batch"
+    return type_found
 
 if __name__ == '__main__':
-    
-    file_name = "EBSAPrueba.csv"
+   
+    file_name = "prueba.csv"
     has_header = False
     lines_read = read_csv(file_name, has_header)
     if(lines_read is None):

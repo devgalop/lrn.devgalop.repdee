@@ -1,12 +1,12 @@
-# Script de reprocesos ondemand
+# Script de reprocesos
 
-Este script permite procesar nuevamente los lanzamientos ondemand de DEE. 
+Este script permite procesar nuevamente los lanzamientos batch u ondemand de DEE. 
 
 El script realiza durante su ejecución los siguientes pasos:
 
 1. Consulta el estado DIAN de la base de datos de Efactura.
 2. Valida el último estado insertado en la base de datos de 5X para cada registro.
-3. Selecciona mensaje de reencolamiento según el último estado encontrado.
+3. Selecciona mensaje de reencolamiento según el último estado encontrado. Es importante tener en cuenta que los procesos batch se reencolarán desde el guardado de la respuesta DIAN.
 4. Encola mensaje para iniciar el reproceso.
 
 Los estados en la base de datos de 5X son:
@@ -15,6 +15,7 @@ Los estados en la base de datos de 5X son:
 - Estado 3: Finaliza generación de JSON para composición.
 - Estado 4: Finaliza composición de documento.
 - Estado 5: Envia a integraciones digitales.
+- Estado 12: Finaliza generación de JSON para la DIAN (Aplica solo para procesos batch)
 
 ## Requisitos
 
