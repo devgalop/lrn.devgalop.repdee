@@ -1,1 +1,4 @@
 ﻿.env
+output_data
+input_csv
+processed_csv

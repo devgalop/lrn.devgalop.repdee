@@ -203,7 +203,7 @@ def generate_queue_message(register_steps: list):
                 update_register_channel_state(conn, id_transmision, track_id)
                 sqs_messages.append({
                     "queue_url": os.getenv("AWS_SQS_URL_DIAN_RESPONSE"),
-                    "message": dian_response
+                    "message": dian_response.get('respuestaDIAN')
                 })
                 continue
             
